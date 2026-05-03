@@ -10,6 +10,7 @@ from io import BytesIO
 from collections import defaultdict
 
 from dotenv import load_dotenv
+import openai
 from openai import AsyncOpenAI
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
@@ -116,16 +117,28 @@ def get_user(user_id):
             "SELECT * FROM candidates WHERE user_id = ?", (user_id,)
         ).fetchone()
     if row:
+        try:
+            conv_history = json.loads(row[2]) if row[2] else []
+        except (json.JSONDecodeError, TypeError):
+            conv_history = []
+            logger.warning(f"Corrupt conversation_history for user {user_id}, resetting.")
+
+        try:
+            media = json.loads(row[8]) if row[8] else []
+        except (json.JSONDecodeError, TypeError):
+            media = []
+            logger.warning(f"Corrupt media_links for user {user_id}, resetting.")
+
         return {
             "user_id": row[0],
             "state": row[1],
-            "conversation_history": json.loads(row[2]) if row[2] else [],
+            "conversation_history": conv_history,
             "specialization": row[3],
             "legal_status": row[4],
             "car_and_tools": row[5],
             "location": row[6],
             "rate": row[7],
-            "media_links": json.loads(row[8]) if row[8] else [],
+            "media_links": media,
             "created_at": row[9],
             "phone_number": row[10] if len(row) > 10 else None,
         }
@@ -225,17 +238,23 @@ async def generate_chat_response(user_id, text, user_history):
     messages = [{"role": "system", "content": SYSTEM_MESSAGE}] + user_history
     
     try:
+        logger.info(f"[LLM] user={user_id} calling OpenAI with {len(messages)} messages, last_user_msg='{text[:80]}...'")
+        t_start = datetime.now()
         response = await openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
             tools=TOOLS,
             temperature=0.8,
             max_tokens=250,
+            timeout=30.0,
         )
+        elapsed = (datetime.now() - t_start).total_seconds()
+        logger.info(f"[LLM] user={user_id} got response in {elapsed:.2f}s")
         
         msg = response.choices[0].message
         
         if msg.tool_calls:
+            logger.info(f"[LLM] user={user_id} tool_call: {msg.tool_calls[0].function.name}")
             tool_call = msg.tool_calls[0]
             if tool_call.function.name == "save_candidate_data":
                 args = json.loads(tool_call.function.arguments)
@@ -281,8 +300,11 @@ async def generate_chat_response(user_id, text, user_history):
         upsert_user(user_id, conversation_history=json.dumps(user_history))
         return reply_text, False
         
+    except openai.APIError as e:
+        logger.error(f"[LLM] user={user_id} OpenAI API error: {type(e).__name__}: {e}", exc_info=True)
+        return "Секунду, я перезвоню. Что-то связь оборвалась.", False
     except Exception as e:
-        logger.error(f"LLM error: {e}", exc_info=True)
+        logger.error(f"[LLM] user={user_id} unexpected error: {type(e).__name__}: {e}", exc_info=True)
         return "Секунду, я перезвоню. Что-то связь оборвалась.", False
 
 # --------------------------------------------------------------------
@@ -365,36 +387,37 @@ def create_dossier(user):
 user_locks = defaultdict(asyncio.Lock)
 # Track how many times a user tried "готово" without photos
 empty_done_attempts = defaultdict(int)
+# Debounce tasks for album photo responses
+photo_debounce_tasks = {}
 
 async def generate_and_send_pdf(user_id, client):
-    """Generate dossier PDF and send to recruiter. No delay — caller decides timing."""
-    async with user_locks[user_id]:
-        user = get_user(user_id)
-        if not user:
-            return
+    """Generate dossier PDF and send to recruiter. Lock must be held by the caller."""
+    user = get_user(user_id)
+    if not user:
+        return
 
-        await client.send_message(
-            user_id,
-            "Принял. Роберт сейчас посмотрит твой профиль и наберет тебя, если есть объект под твои запросы."
+    await client.send_message(
+        user_id,
+        "Принял. Роберт сейчас посмотрит твой профиль и наберет тебя, если есть объект под твои запросы."
+    )
+
+    try:
+        pdf_buffer = create_dossier(user)
+        dossier_filename = os.path.join(DOSSIER_DIR, f"dossier_{user_id}.pdf")
+        with open(dossier_filename, "wb") as f:
+            f.write(pdf_buffer.getvalue())
+
+        # Tell Telethon what the file is called instead of "unnamed"
+        pdf_buffer.name = f"dossier_{user_id}.pdf"
+
+        # Send the PDF to Saved Messages ("me") so the candidate doesn't see it
+        await client.send_file(
+            "me",
+            pdf_buffer,
+            caption=f"Новый кандидат (ID {user_id}). Профиль готов.",
         )
-
-        try:
-            pdf_buffer = create_dossier(user)
-            dossier_filename = os.path.join(DOSSIER_DIR, f"dossier_{user_id}.pdf")
-            with open(dossier_filename, "wb") as f:
-                f.write(pdf_buffer.getvalue())
-
-            # Tell Telethon what the file is called instead of "unnamed"
-            pdf_buffer.name = f"dossier_{user_id}.pdf"
-
-            # Send the PDF to Saved Messages ("me") so the candidate doesn't see it
-            await client.send_file(
-                "me",
-                pdf_buffer,
-                caption=f"Новый кандидат (ID {user_id}). Профиль готов.",
-            )
-        except Exception as e:
-            logger.error(f"PDF generation failed: {e}")
+    except Exception as e:
+        logger.error(f"PDF generation failed: {e}")
 
 # --------------------------------------------------------------------
 # Core message handler
@@ -448,8 +471,32 @@ async def handle_message(event):
                     filename = os.path.basename(path)
                     user["media_links"].append(filename)
                     upsert_user(user_id, media_links=json.dumps(user["media_links"]))
-                    count = len(user["media_links"])
-                    await event.respond(f"Принял. Всего фото: {count}. Можешь добавить ещё или напиши 'готово'.")
+
+                    # Debounce: if this is part of an album (grouped_id), wait for silence before responding
+                    if event.grouped_id:
+                        # Cancel any pending debounce for this album
+                        old_task = photo_debounce_tasks.pop(user_id, None)
+                        if old_task and not old_task.done():
+                            old_task.cancel()
+
+                        event_ref = event  # capture for the closure
+
+                        async def send_debounced():
+                            try:
+                                await asyncio.sleep(1.5)
+                            except asyncio.CancelledError:
+                                return
+                            fresh_user = get_user(user_id)
+                            count = len(fresh_user["media_links"]) if fresh_user else 0
+                            await event_ref.respond(
+                                f"Принял. Всего фото: {count}. Можешь добавить ещё или напиши 'готово'."
+                            )
+
+                        photo_debounce_tasks[user_id] = asyncio.create_task(send_debounced())
+                    else:
+                        # Single photo — respond immediately
+                        count = len(user["media_links"])
+                        await event.respond(f"Принял. Всего фото: {count}. Можешь добавить ещё или напиши 'готово'.")
                 else:
                     text_lower = text.strip().lower()
                     if text_lower in ("все", "всё", "готово", "done", "ok", "ок"):
@@ -467,6 +514,10 @@ async def handle_message(event):
                             upsert_user(user_id, state="done")
                             await generate_and_send_pdf(user_id, client)
                     else:
+                        # Cancel any pending photo debounce when user sends text
+                        old_task = photo_debounce_tasks.pop(user_id, None)
+                        if old_task and not old_task.done():
+                            old_task.cancel()
                         await event.respond("Жду фотографии твоих работ. Как скинешь все, напиши 'готово'.")
 
             elif state == "done":
@@ -477,12 +528,16 @@ async def handle_message(event):
                     user["media_links"].append(filename)
                     upsert_user(user_id, media_links=json.dumps(user["media_links"]))
                 else:
-                    # Forward their question to the recruiter's Saved Messages
-                    await client.send_message(
-                        "me", 
-                        f"Кандидат (ID {user_id}) задает вопрос:\n\n{text}"
+                    # User came back after dossier was sent – reset to chatting so LLM handles it
+                    upsert_user(
+                        user_id,
+                        state="chatting",
+                        conversation_history=json.dumps([]),
                     )
-                    await event.respond("Приняла, профиль уже готов, на связи. Свяжусь позже.")
+                    user["state"] = "chatting"
+                    user["conversation_history"] = []
+                    reply_msg, _ = await generate_chat_response(user_id, text, user["conversation_history"])
+                    await event.respond(reply_msg)
 
             else:
                 logger.warning(f"Unknown state {state} for user {user_id}, resetting.")
