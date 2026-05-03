@@ -1,0 +1,38 @@
+# Environment & secrets
+.env
+
+# Session files (Telegram auth)
+*.session
+
+# Database
+*.db
+
+# Private folders
+dossiers/
+media/
+photos/
+
+# Python virtual environment
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose.yml
