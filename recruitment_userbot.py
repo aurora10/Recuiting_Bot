@@ -958,22 +958,53 @@ async def handle_message(event):
 # --------------------------------------------------------------------
 # Main – with explicit login handling
 # --------------------------------------------------------------------
-from telethon.errors import FloodWaitError
+from telethon.errors import FloodWaitError, SendCodeUnavailableError
 
 async def main():
     init_db()
 
-    # Try login with retry on FloodWaitError
+    if not PHONE_CODE:
+        # No code provided – Telethon will prompt for it via stdin (which fails in Docker).
+        # This path is useful for first-time setup: just call start() to trigger SMS send,
+        # then let it crash with EOFError so user knows to add PHONE_CODE to .env.
+        logger.info("No PHONE_CODE set – requesting new SMS code from Telegram...")
+        try:
+            await client.send_code_request(PHONE, force_sms=True)
+        except FloodWaitError as fw:
+            logger.error(f"FloodWait {fw.seconds}s while requesting code. Must wait before requesting a new SMS.")
+            raise
+        logger.warning("Cannot continue: verification code was sent to your phone. "
+                        "Set PHONE_CODE=<code> in .env and restart the container.")
+        sys.exit(1)
+
+    # PHONE_CODE is set – attempt automated login
     max_attempts = 5
     for attempt in range(1, max_attempts + 1):
         try:
-            if PHONE_CODE:
-                logger.info(f"PHONE_CODE env var detected – automated login (attempt {attempt}/{max_attempts})...")
-                await client.start(phone=PHONE, code_callback=lambda: PHONE_CODE)
-            else:
-                logger.info(f"Starting client – enter verification code manually if prompted (attempt {attempt}/{max_attempts})...")
-                await client.start(phone=PHONE)
+            logger.info(f"Automated login with PHONE_CODE (attempt {attempt}/{max_attempts})...")
+            await client.start(phone=PHONE, code_callback=lambda: PHONE_CODE)
             break  # success
+        except RuntimeError as e:
+            # "3 consecutive sign-in attempts failed" — code is wrong, don't retry
+            err_msg = str(e)
+            if "consecutive sign-in attempts failed" in err_msg or "sign-in" in err_msg.lower():
+                logger.error(f"PHONE_CODE is INVALID: {e}")
+                logger.error("Get a NEW verification code from Telegram (check your phone), "
+                             "update PHONE_CODE in .env, delete data/recruitment_session.session, and restart.")
+                raise
+            # Some other RuntimeError – retry
+            logger.error(f"Runtime error (attempt {attempt}/{max_attempts}): {e}")
+            if attempt < max_attempts:
+                await asyncio.sleep(10 * attempt)
+            else:
+                raise
+        except SendCodeUnavailableError as e:
+            # Telegram won't send more codes to this number right now
+            logger.error(f"Cannot request new SMS code: {e}")
+            logger.error("Telegram rate limit for this phone number. "
+                         "Wait 5-10 minutes, then set PHONE_CODE= (empty) in .env, "
+                         "delete data/recruitment_session.session, and restart to request a fresh code.")
+            raise
         except FloodWaitError as fw:
             wait_sec = fw.seconds + 5  # padding
             if attempt < max_attempts:
@@ -1008,6 +1039,14 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nBot stopped by user.")
+    except RuntimeError as e:
+        if "sign-in" in str(e).lower():
+            print(f"\nInvalid PHONE_CODE: {e}")
+            print("Get a new code, update PHONE_CODE in .env, delete session, and restart.")
+        else:
+            print(f"\nFatal error: {e}")
+    except SendCodeUnavailableError:
+        print("\nSMS rate limit hit. Wait 5-10 minutes, clear PHONE_CODE, delete session, restart.")
     except FloodWaitError as fw:
         print(f"\nTelegram flood wait still active ({fw.seconds}s). Wait and try again later.")
     except Exception as e:
