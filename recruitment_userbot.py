@@ -958,16 +958,38 @@ async def handle_message(event):
 # --------------------------------------------------------------------
 # Main – with explicit login handling
 # --------------------------------------------------------------------
+from telethon.errors import FloodWaitError
+
 async def main():
     init_db()
 
-    # Use PHONE_CODE env var for first-time login if set
-    if PHONE_CODE:
-        logger.info("PHONE_CODE env var detected – attempting automated login...")
-        await client.start(phone=PHONE, code_callback=lambda: PHONE_CODE)
-    else:
-        logger.info("Starting client – enter verification code manually if prompted.")
-        await client.start(phone=PHONE)
+    # Try login with retry on FloodWaitError
+    max_attempts = 5
+    for attempt in range(1, max_attempts + 1):
+        try:
+            if PHONE_CODE:
+                logger.info(f"PHONE_CODE env var detected – automated login (attempt {attempt}/{max_attempts})...")
+                await client.start(phone=PHONE, code_callback=lambda: PHONE_CODE)
+            else:
+                logger.info(f"Starting client – enter verification code manually if prompted (attempt {attempt}/{max_attempts})...")
+                await client.start(phone=PHONE)
+            break  # success
+        except FloodWaitError as fw:
+            wait_sec = fw.seconds + 5  # padding
+            if attempt < max_attempts:
+                logger.warning(f"FloodWait {fw.seconds}s – sleeping {wait_sec}s before retry ({attempt}/{max_attempts})...")
+                await asyncio.sleep(wait_sec)
+            else:
+                logger.error(f"FloodWait persists after {max_attempts} attempts – giving up.")
+                raise
+        except Exception as e:
+            logger.error(f"Login failed (attempt {attempt}/{max_attempts}): {type(e).__name__}: {e}")
+            if attempt < max_attempts:
+                backoff = 10 * attempt
+                logger.info(f"Retrying in {backoff}s...")
+                await asyncio.sleep(backoff)
+            else:
+                raise
 
     logger.info("Userbot is now running...")
     try:
@@ -982,20 +1004,13 @@ if __name__ == "__main__":
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-    loop = asyncio.get_event_loop()
     try:
-        loop.run_until_complete(main())
+        asyncio.run(main())
     except KeyboardInterrupt:
         print("\nBot stopped by user.")
+    except FloodWaitError as fw:
+        print(f"\nTelegram flood wait still active ({fw.seconds}s). Wait and try again later.")
     except Exception as e:
-        print(f"\nFatal error: {e}")
+        print(f"\nFatal error: {type(e).__name__}: {e}")
         import traceback
         traceback.print_exc()
-    finally:
-        # Cancel any remaining background tasks (like PDF generators) quietly
-        pending = asyncio.all_tasks(loop=loop)
-        for task in pending:
-            task.cancel()
-        if pending:
-            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-        loop.close()
