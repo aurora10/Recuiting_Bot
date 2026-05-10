@@ -36,3 +36,9 @@ __pycache__/
 Dockerfile
 .dockerignore
 docker-compose.yml
+
+# Deployment scripts (not needed in image)
+deploy/
+
+# Runtime data (mounted as volume)
+data/

@@ -48,6 +48,7 @@ print("  OPENAI_API_KEY:", os.getenv("OPENAI_API_KEY")[:6] + "****" if os.getenv
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 PHONE = os.getenv("PHONE")
+PHONE_CODE = os.getenv("PHONE_CODE") or None  # optional: only for first-time login
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GMAIL_USER = os.getenv("GMAIL_USER")
 GMAIL_PASS = os.getenv("GMAIL_PASS")
@@ -61,19 +62,23 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Data directory – all persistent files go here (override via DATA_DIR env var)
+DATA_DIR = os.getenv("DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
+os.makedirs(DATA_DIR, exist_ok=True)
+
 # SQLite database for conversation state
-DB = "candidates.db"
+DB = os.path.join(DATA_DIR, "candidates.db")
 
 # Media storage folder
-MEDIA_DIR = "media"
+MEDIA_DIR = os.path.join(DATA_DIR, "media")
 os.makedirs(MEDIA_DIR, exist_ok=True)
 
 # Dossier storage folder
-DOSSIER_DIR = "dossiers"
+DOSSIER_DIR = os.path.join(DATA_DIR, "dossiers")
 os.makedirs(DOSSIER_DIR, exist_ok=True)
 
-# Telegram client (userbot)
-client = TelegramClient("recruitment_session", API_ID, API_HASH)
+# Telegram client (userbot) – session file stored in DATA_DIR
+client = TelegramClient(os.path.join(DATA_DIR, "recruitment_session"), API_ID, API_HASH)
 
 # --------------------------------------------------------------------
 # Database helpers
@@ -955,7 +960,15 @@ async def handle_message(event):
 # --------------------------------------------------------------------
 async def main():
     init_db()
-    await client.start(phone=PHONE)
+
+    # Use PHONE_CODE env var for first-time login if set
+    if PHONE_CODE:
+        logger.info("PHONE_CODE env var detected – attempting automated login...")
+        await client.start(phone=PHONE, code_callback=lambda: PHONE_CODE)
+    else:
+        logger.info("Starting client – enter verification code manually if prompted.")
+        await client.start(phone=PHONE)
+
     logger.info("Userbot is now running...")
     try:
         await client.run_until_disconnected()
