@@ -963,26 +963,24 @@ from telethon.errors import FloodWaitError, SendCodeUnavailableError
 async def main():
     init_db()
 
-    if not PHONE_CODE:
-        # No code provided – Telethon will prompt for it via stdin (which fails in Docker).
-        # This path is useful for first-time setup: just call start() to trigger SMS send,
-        # then let it crash with EOFError so user knows to add PHONE_CODE to .env.
-        logger.info("No PHONE_CODE set – requesting new SMS code from Telegram...")
-        try:
-            await client.send_code_request(PHONE, force_sms=True)
-        except FloodWaitError as fw:
-            logger.error(f"FloodWait {fw.seconds}s while requesting code. Must wait before requesting a new SMS.")
-            raise
-        logger.warning("Cannot continue: verification code was sent to your phone. "
-                        "Set PHONE_CODE=<code> in .env and restart the container.")
-        sys.exit(1)
-
-    # PHONE_CODE is set – attempt automated login
+    # client.start() connects, triggers SMS if needed, and submits PHONE_CODE.
+    # If PHONE_CODE is missing, the callback raises a clear error (user adds it to .env and restarts).
+    # If PHONE_CODE is wrong, RuntimeError signals "get a fresh code".
     max_attempts = 5
     for attempt in range(1, max_attempts + 1):
         try:
-            logger.info(f"Automated login with PHONE_CODE (attempt {attempt}/{max_attempts})...")
-            await client.start(phone=PHONE, code_callback=lambda: PHONE_CODE)
+            if PHONE_CODE:
+                logger.info(f"Login with PHONE_CODE (attempt {attempt}/{max_attempts})...")
+            else:
+                logger.info(f"Requesting SMS code (attempt {attempt}/{max_attempts})...")
+            await client.start(
+                phone=PHONE,
+                code_callback=lambda: PHONE_CODE if PHONE_CODE
+                    else (_ for _ in ()).throw(RuntimeError(
+                        "No PHONE_CODE set – verification code was sent to your phone. "
+                        "Set PHONE_CODE=<code> in .env and restart the container."
+                    ))
+            )
             break  # success
         except RuntimeError as e:
             # "3 consecutive sign-in attempts failed" — code is wrong, don't retry
