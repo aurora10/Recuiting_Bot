@@ -983,8 +983,12 @@ async def main():
             )
             break  # success
         except RuntimeError as e:
-            # "3 consecutive sign-in attempts failed" — code is wrong, don't retry
             err_msg = str(e)
+            # "No PHONE_CODE set" — SMS was just sent, exit so user can add the code. Don't retry.
+            if "No PHONE_CODE set" in err_msg:
+                logger.error(err_msg)
+                raise
+            # "3 consecutive sign-in attempts failed" — code is wrong, don't retry
             if "consecutive sign-in attempts failed" in err_msg or "sign-in" in err_msg.lower():
                 logger.error(f"PHONE_CODE is INVALID: {e}")
                 logger.error("Get a NEW verification code from Telegram (check your phone), "
