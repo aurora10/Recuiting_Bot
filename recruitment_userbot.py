@@ -83,11 +83,17 @@ client = TelegramClient(os.path.join(DATA_DIR, "recruitment_session"), API_ID, A
 # --------------------------------------------------------------------
 # Database helpers
 # --------------------------------------------------------------------
+def _db_connect():
+    """Return a SQLite connection with WAL mode and busy timeout."""
+    conn = sqlite3.connect(DB, timeout=10)
+    conn.execute("PRAGMA journal_mode=WAL")
+    return conn
+
 def init_db():
     """Create the candidates table if it doesn't exist."""
     db_is_new = not os.path.exists(DB)
     
-    with sqlite3.connect(DB) as conn:
+    with _db_connect() as conn:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS candidates (
@@ -132,7 +138,7 @@ def init_db():
             pass
     
     # Verify the table exists
-    with sqlite3.connect(DB) as conn:
+    with _db_connect() as conn:
         cur = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='candidates'"
         )
@@ -146,7 +152,7 @@ def init_db():
 
 def get_user(user_id):
     """Return user data as a dict, or None."""
-    with sqlite3.connect(DB) as conn:
+    with _db_connect() as conn:
         row = conn.execute(
             "SELECT * FROM candidates WHERE user_id = ?", (user_id,)
         ).fetchone()
@@ -196,7 +202,7 @@ def upsert_user(user_id, **kwargs):
     if not updates:
         return
 
-    with sqlite3.connect(DB) as conn:
+    with _db_connect() as conn:
         cur = conn.execute("SELECT 1 FROM candidates WHERE user_id = ?", (user_id,))
         exists = cur.fetchone() is not None
 
