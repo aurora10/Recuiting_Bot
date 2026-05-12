@@ -490,14 +490,23 @@ def is_valid_number(text: str) -> bool:
 
 
 async def human_typing_delay(chat_id, response_text):
-    """Simulate human typing delay with 'typing...' indicator."""
+    """Simulate human typing delay with 'typing...' indicator.
+    Gracefully falls back to silent sleep if the chat entity is not cached yet
+    (common with fresh sessions)."""
     char_count = len(response_text)
     typing_time = char_count * random.uniform(0.03, 0.06)
     reading_time = random.uniform(1.5, 3.5)
     total = min(reading_time + typing_time, 12.0)
     total = max(total, 2.0)  # at least 2 seconds
-    async with client.action(chat_id, 'typing'):
-        await asyncio.sleep(total)
+    try:
+        async with client.action(chat_id, 'typing'):
+            await asyncio.sleep(total)
+    except ValueError as e:
+        if "Could not find the input entity" in str(e):
+            logger.debug(f"Entity not cached for {chat_id}, sleeping silently: {e}")
+            await asyncio.sleep(total)
+        else:
+            raise
 
 
 async def generate_media_response(user_id, situation, user_history):
