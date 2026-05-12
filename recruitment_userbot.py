@@ -960,6 +960,17 @@ async def handle_message(event):
 # --------------------------------------------------------------------
 from telethon.errors import FloodWaitError, SendCodeUnavailableError
 
+SESSION_FILE = os.path.join(DATA_DIR, "recruitment_session.session")
+
+def _delete_session_file():
+    """Remove the Telethon session file so next login starts fresh."""
+    if os.path.exists(SESSION_FILE):
+        try:
+            os.remove(SESSION_FILE)
+            logger.info(f"Deleted session file: {SESSION_FILE}")
+        except OSError as e:
+            logger.warning(f"Could not delete session file {SESSION_FILE}: {e}")
+
 async def main():
     init_db()
 
@@ -988,11 +999,12 @@ async def main():
             if "No PHONE_CODE set" in err_msg:
                 logger.error(err_msg)
                 raise
-            # "3 consecutive sign-in attempts failed" — code is wrong, don't retry
+            # "3 consecutive sign-in attempts failed" — code is wrong. Delete session, don't retry.
             if "consecutive sign-in attempts failed" in err_msg or "sign-in" in err_msg.lower():
+                _delete_session_file()
                 logger.error(f"PHONE_CODE is INVALID: {e}")
-                logger.error("Get a NEW verification code from Telegram (check your phone), "
-                             "update PHONE_CODE in .env, delete data/recruitment_session.session, and restart.")
+                logger.error("Session file deleted. Get a NEW verification code from Telegram "
+                             "(check your phone), update PHONE_CODE in .env, and restart.")
                 raise
             # Some other RuntimeError – retry
             logger.error(f"Runtime error (attempt {attempt}/{max_attempts}): {e}")
@@ -1002,17 +1014,27 @@ async def main():
                 raise
         except SendCodeUnavailableError as e:
             # Telegram won't send more codes to this number right now
+            _delete_session_file()
             logger.error(f"Cannot request new SMS code: {e}")
-            logger.error("Telegram rate limit for this phone number. "
-                         "Wait 5-10 minutes, then set PHONE_CODE= (empty) in .env, "
-                         "delete data/recruitment_session.session, and restart to request a fresh code.")
+            logger.error("Session file deleted. Telegram rate limit for this phone number. "
+                         "Wait 5-10 minutes, then set PHONE_CODE= (empty) in .env and restart.")
             raise
         except FloodWaitError as fw:
-            wait_sec = fw.seconds + 5  # padding
+            hours = fw.seconds / 3600
+            if fw.seconds > 300:  # > 5 minutes — don't sleep, just exit
+                _delete_session_file()
+                logger.error(
+                    f"FloodWait {fw.seconds}s (~{hours:.1f}h). Session file deleted. "
+                    f"Telegram banned this number for {hours:.1f} hours. "
+                    "Wait it out, then set PHONE_CODE= (empty) in .env and restart."
+                )
+                raise
+            wait_sec = fw.seconds + 5
             if attempt < max_attempts:
                 logger.warning(f"FloodWait {fw.seconds}s – sleeping {wait_sec}s before retry ({attempt}/{max_attempts})...")
                 await asyncio.sleep(wait_sec)
             else:
+                _delete_session_file()
                 logger.error(f"FloodWait persists after {max_attempts} attempts – giving up.")
                 raise
         except Exception as e:
