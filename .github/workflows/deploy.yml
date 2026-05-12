@@ -33,6 +33,15 @@ jobs:
           cache-from: type=registry,ref=aurora1010/recruiter-bot:buildcache
           cache-to: type=registry,ref=aurora1010/recruiter-bot:buildcache,mode=max
 
+      - name: Copy docker-compose.yml to VPS
+        uses: appleboy/scp-action@v0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: docker-compose.yml
+          target: /srv/recruiter_bot/
+
       - name: Deploy to VPS
         uses: appleboy/ssh-action@v1
         with:
@@ -43,14 +52,14 @@ jobs:
             set -e
             cd /srv/recruiter_bot
 
-            # Pull latest compose file and config
-            git pull origin main
+            # Stop all running containers (avoids duplicates)
+            docker compose down
 
             # Pull latest Docker image
             docker compose pull
 
-            # Recreate container with new image
-            docker compose up -d --remove-orphans
+            # Start fresh container
+            docker compose up -d
 
             # Clean up old images
             docker image prune -f
