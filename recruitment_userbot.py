@@ -516,7 +516,10 @@ async def human_typing_delay(chat_id, response_text):
 async def generate_media_response(user_id, situation, user_history):
     """Generate natural LLM response for media collection phase."""
     system = MEDIA_PHASE_SYSTEM + f"\nСИТУАЦИЯ: {situation}\nОтветь кандидату ОДНИМ коротким сообщением."
-    recent = [m for m in user_history[-6:] if m.get("role") in ("user", "assistant")]
+    recent = []
+    for m in user_history[-6:]:
+        if m.get("role") in ("user", "assistant"):
+            recent.append({"role": m["role"], "content": m.get("content") or ""})
     messages = [{"role": "system", "content": system}] + recent
 
     try:
@@ -538,7 +541,10 @@ async def generate_done_response(user_id, situation, user_history):
     """Generate natural LLM response for post-dossier phase."""
     system = "Ты — помощник рекрутера Роберта. Профиль кандидата уже собран и отправлен Роберту.\n" + \
              f"СИТУАЦИЯ: {situation}\nОтветь кандидату ОДНИМ коротким сообщением по смыслу. Не задавай вопросов и не проси фото."
-    recent = [m for m in user_history[-6:] if m.get("role") in ("user", "assistant")]
+    recent = []
+    for m in user_history[-6:]:
+        if m.get("role") in ("user", "assistant"):
+            recent.append({"role": m["role"], "content": m.get("content") or ""})
     messages = [{"role": "system", "content": system}] + recent
 
     try:
