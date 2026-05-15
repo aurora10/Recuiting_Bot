@@ -534,6 +534,28 @@ async def generate_media_response(user_id, situation, user_history):
         logger.error(f"[LLM-media] user={user_id} error: {e}")
     return None  # caller uses fallback
 
+async def generate_done_response(user_id, situation, user_history):
+    """Generate natural LLM response for post-dossier phase."""
+    system = "Ты — помощник рекрутера Роберта. Профиль кандидата уже собран и отправлен Роберту.\n" + \
+             f"СИТУАЦИЯ: {situation}\nОтветь кандидату ОДНИМ коротким сообщением по смыслу. Не задавай вопросов и не проси фото."
+    recent = [m for m in user_history[-6:] if m.get("role") in ("user", "assistant")]
+    messages = [{"role": "system", "content": system}] + recent
+
+    try:
+        response = await openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=messages,
+            temperature=0.9,
+            max_tokens=150,
+            timeout=15.0,
+        )
+        reply = response.choices[0].message.content.strip()
+        if reply:
+            return reply
+    except Exception as e:
+        logger.error(f"[LLM-done] user={user_id} error: {e}")
+    return None
+
 # --------------------------------------------------------------------
 # Dossier PDF generator
 # --------------------------------------------------------------------
@@ -951,14 +973,18 @@ async def handle_message(event):
                     upsert_user(user_id, media_links=json.dumps(user["media_links"]))
                 else:
                     text_lower = text.strip().lower()
-                    # Explicit restart phrases handled globally, so just handle normal chat
-                    # User is just messaging after dossier – DON'T call generate_chat_response
-                    # (that uses the interview SYSTEM_MESSAGE and restarts the whole interview).
-                    # Use generate_media_response with a "post-dossier" situation instead.
-                    situation = f"Профиль кандидата уже отправлен рекрутеру. Кандидат спрашивает: '{text}'. Ответь коротко: новостей пока нет, как только что-то будет — сразу сообщишь. Не задавай вопросов, не начинай новый опрос, не спрашивай про навыки/документы/фото — просто подтверди что на связи и ждёшь новостей от Роберта."
-                    reply_msg = await generate_media_response(user_id, situation, user["conversation_history"])
+                    # Append user message to history so the bot remembers the context
+                    user["conversation_history"].append({"role": "user", "content": text})
+                    
+                    situation = f"Кандидат пишет: '{text}'. Ответь на его вопрос логично и естественно. Если спрашивает когда будет результат, скажи что Роберт посмотрит и наберет как только появится подходящий объект. Не пиши шаблонно, реагируй на суть вопроса. НЕ начинай новый опрос, не задавай вопросов, отвечай коротко и по-человечески."
+                    reply_msg = await generate_done_response(user_id, situation, user["conversation_history"])
                     if not reply_msg:
                         reply_msg = "Пока новостей нет. Как только что-то будет — сразу дам знать"
+                    
+                    # Save assistant reply to history
+                    user["conversation_history"].append({"role": "assistant", "content": reply_msg})
+                    upsert_user(user_id, conversation_history=json.dumps(user["conversation_history"]))
+                    
                     await human_typing_delay(user_id, reply_msg)
                     await event.respond(reply_msg)
 
