@@ -806,6 +806,23 @@ async def handle_message(event):
                 )
                 user = get_user(user_id)
 
+            # Global reset check
+            text_lower = text.strip().lower()
+            if text_lower in ("/start", "заново", "сначала", "начнём заново", "restart", "сброс"):
+                upsert_user(
+                    user_id,
+                    state="chatting",
+                    conversation_history=json.dumps([]),
+                    media_links=json.dumps([])
+                )
+                user["state"] = "chatting"
+                user["conversation_history"] = []
+                user["media_links"] = []
+                reply_msg, _ = await generate_chat_response(user_id, text, user["conversation_history"])
+                await human_typing_delay(user_id, reply_msg)
+                await event.respond(reply_msg)
+                return
+
             # Process according to state
             state = user["state"]
 
@@ -937,28 +954,16 @@ async def handle_message(event):
                     upsert_user(user_id, media_links=json.dumps(user["media_links"]))
                 else:
                     text_lower = text.strip().lower()
-                    # Explicit restart phrases
-                    if text_lower in ("заново", "сначала", "начнём заново", "restart", "сброс"):
-                        upsert_user(
-                            user_id,
-                            state="chatting",
-                            conversation_history=json.dumps([]),
-                        )
-                        user["state"] = "chatting"
-                        user["conversation_history"] = []
-                        reply_msg, _ = await generate_chat_response(user_id, text, user["conversation_history"])
-                        await human_typing_delay(user_id, reply_msg)
-                        await event.respond(reply_msg)
-                    else:
-                        # User is just messaging after dossier – DON'T call generate_chat_response
-                        # (that uses the interview SYSTEM_MESSAGE and restarts the whole interview).
-                        # Use generate_media_response with a "post-dossier" situation instead.
-                        situation = f"Профиль кандидата уже отправлен рекрутеру. Кандидат спрашивает: '{text}'. Ответь коротко: новостей пока нет, как только что-то будет — сразу сообщишь. Не задавай вопросов, не начинай новый опрос, не спрашивай про навыки/документы/фото — просто подтверди что на связи и ждёшь новостей от Роберта."
-                        reply_msg = await generate_media_response(user_id, situation, user["conversation_history"])
-                        if not reply_msg:
-                            reply_msg = "Пока новостей нет. Как только что-то будет — сразу дам знать"
-                        await human_typing_delay(user_id, reply_msg)
-                        await event.respond(reply_msg)
+                    # Explicit restart phrases handled globally, so just handle normal chat
+                    # User is just messaging after dossier – DON'T call generate_chat_response
+                    # (that uses the interview SYSTEM_MESSAGE and restarts the whole interview).
+                    # Use generate_media_response with a "post-dossier" situation instead.
+                    situation = f"Профиль кандидата уже отправлен рекрутеру. Кандидат спрашивает: '{text}'. Ответь коротко: новостей пока нет, как только что-то будет — сразу сообщишь. Не задавай вопросов, не начинай новый опрос, не спрашивай про навыки/документы/фото — просто подтверди что на связи и ждёшь новостей от Роберта."
+                    reply_msg = await generate_media_response(user_id, situation, user["conversation_history"])
+                    if not reply_msg:
+                        reply_msg = "Пока новостей нет. Как только что-то будет — сразу дам знать"
+                    await human_typing_delay(user_id, reply_msg)
+                    await event.respond(reply_msg)
 
             else:
                 logger.warning(f"Unknown state {state} for user {user_id}, resetting.")
