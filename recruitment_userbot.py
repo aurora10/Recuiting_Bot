@@ -501,11 +501,8 @@ async def human_typing_delay(chat_id, response_text):
     """Simulate human typing delay with 'typing...' indicator.
     Gracefully falls back to silent sleep if the chat entity is not cached yet
     (common with fresh sessions)."""
-    char_count = len(response_text)
-    typing_time = char_count * random.uniform(0.03, 0.06)
-    reading_time = random.uniform(1.5, 3.5)
-    total = min(reading_time + typing_time, 12.0)
-    total = max(total, 2.0)  # at least 2 seconds
+    # Random delay between 5 and 15 seconds as requested
+    total = random.uniform(5.0, 15.0)
     try:
         async with client.action(chat_id, 'typing'):
             await asyncio.sleep(total)
