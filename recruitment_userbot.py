@@ -827,7 +827,8 @@ async def handle_message(event):
 
             # Global reset check
             text_lower = text.strip().lower()
-            if text_lower in ("/start", "заново", "сначала", "начнём заново", "restart", "сброс"):
+            if text_lower in ("заново", "сначала", "начнём заново", "restart", "сброс") or \
+               text_lower.startswith(("/start", "/restart", "/restrat")):
                 upsert_user(
                     user_id,
                     state="chatting",
