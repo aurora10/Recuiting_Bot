@@ -335,7 +335,7 @@ async def generate_chat_response(user_id, text, user_history):
         logger.info(f"[LLM] user={user_id} calling OpenAI with {len(messages)} messages, last_user_msg='{text[:80]}...'")
         t_start = datetime.now()
         response = await openai_client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5.5",
             messages=messages,
             tools=TOOLS,
             temperature=0.8,
