@@ -462,11 +462,31 @@ async def generate_chat_response(user_id, text, user_history):
                 # Generate natural transition message via LLM
                 fresh_user = get_user(user_id)
                 photo_count = len(fresh_user["media_links"]) if fresh_user else 0
+                
+                transition_sys = "Ты помощник рекрутера. Все анкетные данные кандидата только что записаны. "
                 if photo_count > 0:
-                    situation = f"Все данные кандидата записаны. У него уже есть {photo_count} фото. Скажи что данные принял, и можно докинуть ещё фото или написать 'готово'."
+                    transition_sys += f"У кандидата уже загружено {photo_count} фото. Поблагодари и скажи, что если есть еще фото, пусть скидывает, а как закончит — пусть напишет 'готово'."
                 else:
-                    situation = "Все данные кандидата записаны. Теперь нужны фотографии работ — 3-4 штуки. Попроси скинуть фотки."
-                final_msg = await generate_media_response(user_id, situation, user_history)
+                    transition_sys += "Твоя задача — попросить кандидата прислать 3-4 фотографии его работ. Обязательно скажи ему: 'Как всё скинешь — напиши слово ГОТОВО'. Пиши по-мужски, коротко и по делу."
+                
+                recent = []
+                for m in user_history[-6:]:
+                    if m.get("role") in ("user", "assistant"):
+                        recent.append({"role": m["role"], "content": m.get("content") or ""})
+                        
+                try:
+                    response = await openai_client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[{"role": "system", "content": transition_sys}] + recent,
+                        temperature=0.9,
+                        max_tokens=100,
+                        timeout=15.0,
+                    )
+                    final_msg = response.choices[0].message.content.strip()
+                except Exception as e:
+                    logger.error(f"[LLM-transition] user={user_id} error: {e}")
+                    final_msg = ""
+                    
                 if not final_msg:
                     final_msg = "Всё записал. Закинь сюда 3-4 хороших фотки твоих работ. Как всё скинешь — просто черкани 'всё' или 'готово', и Роберт пустит профиль в работу" if photo_count == 0 else f"Записал. У тебя {photo_count} фото, можешь ещё докинуть или напиши готово"
                 user_history.append({"role": "assistant", "content": final_msg})
