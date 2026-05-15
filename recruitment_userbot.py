@@ -338,8 +338,7 @@ async def generate_chat_response(user_id, text, user_history):
             model="gpt-5.5",
             messages=messages,
             tools=TOOLS,
-            temperature=0.8,
-            max_tokens=250,
+            max_completion_tokens=250,
             timeout=30.0,
         )
         elapsed = (datetime.now() - t_start).total_seconds()
