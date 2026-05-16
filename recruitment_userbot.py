@@ -57,6 +57,8 @@ GMAIL_PASS = os.getenv("GMAIL_PASS")
 openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 # Logging
+from logging.handlers import RotatingFileHandler
+
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO
 )
@@ -65,6 +67,21 @@ logger = logging.getLogger(__name__)
 # Data directory – all persistent files go here (override via DATA_DIR env var)
 DATA_DIR = os.getenv("DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
 os.makedirs(DATA_DIR, exist_ok=True)
+
+# Bot operational logs directory (rotating file handler)
+BOT_LOG_DIR = os.path.join(DATA_DIR, "logs")
+os.makedirs(BOT_LOG_DIR, exist_ok=True)
+
+# Add rotating file handler for persistent bot logs
+_bot_log_path = os.path.join(BOT_LOG_DIR, "bot.log")
+_fh = RotatingFileHandler(_bot_log_path, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8")
+_fh.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+_fh.setLevel(logging.INFO)
+logger.addHandler(_fh)
+
+# Conversation logs directory (one JSON per candidate)
+CONVERSATION_LOG_DIR = os.path.join(DATA_DIR, "conversations")
+os.makedirs(CONVERSATION_LOG_DIR, exist_ok=True)
 
 # SQLite database for conversation state
 DB = os.path.join(DATA_DIR, "candidates.db")
@@ -218,6 +235,133 @@ def upsert_user(user_id, **kwargs):
                 f"INSERT INTO candidates (user_id, {columns}) VALUES (?, {placeholders})",
                 [user_id] + values,
             )
+
+# --------------------------------------------------------------------
+# Conversation logging helpers
+# --------------------------------------------------------------------
+def _get_conversation_log_path(user_id):
+    """Return the file path for a candidate's conversation log JSON."""
+    return os.path.join(CONVERSATION_LOG_DIR, f"{user_id}.json")
+
+
+def log_conversation_event(user_id, event_type, data=None):
+    """Append a timestamped event to the candidate's conversation log file.
+
+    Args:
+        user_id: Telegram user ID
+        event_type: e.g. 'user_message', 'bot_reply', 'state_change', 'tool_call',
+                    'tool_rejected', 'photo_received', 'video_received', 'reset',
+                    'dossier_generated', 'handler_error'
+        data: dict with event-specific details
+    """
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "event": event_type,
+    }
+    if data:
+        entry["data"] = data
+
+    log_path = _get_conversation_log_path(user_id)
+    try:
+        # Read existing log
+        if os.path.exists(log_path):
+            with open(log_path, "r", encoding="utf-8") as f:
+                try:
+                    log_entries = json.load(f)
+                except json.JSONDecodeError:
+                    log_entries = []
+        else:
+            log_entries = []
+
+        log_entries.append(entry)
+
+        with open(log_path, "w", encoding="utf-8") as f:
+            json.dump(log_entries, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Failed to write conversation log for user {user_id}: {e}")
+
+
+def export_conversation_txt(user):
+    """Generate a human-readable .txt transcript from the conversation log and DB data.
+
+    Returns:
+        str: The transcript text, or None if no log file exists.
+    """
+    user_id = user["user_id"]
+    log_path = _get_conversation_log_path(user_id)
+
+    if not os.path.exists(log_path):
+        return None
+
+    try:
+        with open(log_path, "r", encoding="utf-8") as f:
+            log_entries = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning(f"Could not read conversation log for user {user_id}: {e}")
+        return None
+
+    display_name = user.get("candidate_name") or f"Kandidaat {user_id}"
+    lines = []
+    lines.append("=== Recruiter Bot – Conversation Transcript ===")
+    lines.append(f"Candidate ID: {user_id}")
+    lines.append(f"Candidate Name: {display_name}")
+    lines.append(f"Started: {user.get('created_at', 'N/A')}")
+    lines.append(f"State: {user.get('state', 'N/A')}")
+    lines.append(f"Photos: {len(user.get('media_links', []))}")
+    lines.append("")
+    lines.append("--- Conversation ---")
+    lines.append("")
+
+    for entry in log_entries:
+        ts = entry.get("timestamp", "")[:19].replace("T", " ")
+        evt = entry.get("event", "")
+        d = entry.get("data") or {}
+
+        if evt == "user_message":
+            lines.append(f"[{ts}] Candidate: {d.get('text', '')}")
+        elif evt == "bot_reply":
+            lines.append(f"[{ts}] Bot: {d.get('text', '')}")
+        elif evt == "photo_received":
+            lines.append(f"[{ts}] [Candidate sent a photo: {d.get('filename', 'unknown')}]")
+        elif evt == "video_received":
+            lines.append(f"[{ts}] [Candidate sent a video: {d.get('filename', 'unknown')}]")
+        elif evt == "state_change":
+            lines.append(f"[{ts}] --- State changed: {d.get('from', '?')} → {d.get('to', '?')} ---")
+        elif evt == "tool_call":
+            args_text = json.dumps(d.get("arguments", {}), indent=2, ensure_ascii=False)
+            lines.append(f"[{ts}] --- Tool: {d.get('name', 'unknown')} ---")
+            lines.append(f"    Result: {d.get('result', '?')}")
+            lines.append(f"    Data:\n{args_text}")
+        elif evt == "tool_rejected":
+            lines.append(f"[{ts}] --- Tool REJECTED: {d.get('reason', '')} ---")
+        elif evt == "reset":
+            lines.append(f"[{ts}] --- Conversation RESET by candidate ---")
+        elif evt == "dossier_generated":
+            lines.append(f"[{ts}] --- Dossier generated and sent to recruiter ---")
+        elif evt == "handler_error":
+            lines.append(f"[{ts}] --- Handler error: {d.get('error', '')} ---")
+        elif evt == "auto_complete":
+            lines.append(f"[{ts}] --- Auto-completed (idle timeout) ---")
+
+    lines.append("")
+    lines.append("--- Profile Data (Dutch) ---")
+    lines.append(f"Specialisatie: {user.get('specialization', 'N/A')}")
+    lines.append(f"Documenten: {user.get('legal_status', 'N/A')}")
+    lines.append(f"Auto/Gereedschap: {user.get('car_and_tools', 'N/A')}")
+    lines.append(f"Locatie: {user.get('location', 'N/A')}")
+    lines.append(f"Tarief: {user.get('rate', 'N/A')}")
+    lines.append(f"Telefoon: {user.get('phone_number', 'N/A')}")
+    lines.append(f"Talen: {user.get('languages', 'N/A')}")
+    lines.append(f"Brigade: {user.get('team_size', 'N/A')}")
+    lines.append(f"Beschikbaarheid: {user.get('availability', 'N/A')}")
+    lines.append("")
+    lines.append("--- Media Files ---")
+    for mf in user.get("media_links", []):
+        lines.append(f"  {mf}")
+    lines.append("")
+
+    return "\n".join(lines)
+
 
 # --------------------------------------------------------------------
 # LLM helper for dynamic chat
@@ -717,6 +861,13 @@ def _send_email_sync(user, pdf_bytes):
     pdf_attachment.add_header("Content-Disposition", "attachment", filename=f"dossier_{user_id}.pdf")
     msg.attach(pdf_attachment)
 
+    # Attach conversation transcript (.txt)
+    conversation_txt = export_conversation_txt(user)
+    if conversation_txt:
+        txt_attachment = MIMEText(conversation_txt, "plain", "utf-8")
+        txt_attachment.add_header("Content-Disposition", "attachment", filename=f"conversation_{user_id}.txt")
+        msg.attach(txt_attachment)
+
     # Attach all media files (photos/videos)
     media_links = user.get("media_links", [])
     for filename in media_links:
@@ -823,6 +974,8 @@ async def generate_and_send_pdf(user_id, client):
         # Email the full profile (PDF + JSON + media) to Gmail
         await email_profile(user, pdf_bytes)
 
+        log_conversation_event(user_id, "dossier_generated")
+
     except Exception as e:
         logger.error(f"PDF generation failed: {e}")
 
@@ -853,6 +1006,7 @@ async def handle_message(event):
             text_lower = text.strip().lower()
             if text_lower in ("заново", "сначала", "начнём заново", "restart", "сброс") or \
                text_lower.startswith(("/start", "/restart", "/restrat")):
+                log_conversation_event(user_id, "reset", {"trigger": text})
                 upsert_user(
                     user_id,
                     state="chatting",
@@ -878,15 +1032,28 @@ async def handle_message(event):
                     filename = os.path.basename(path)
                     user["media_links"].append(filename)
                     upsert_user(user_id, media_links=json.dumps(user["media_links"]))
+                    log_conversation_event(user_id, "photo_received", {"filename": filename})
                     llm_text = (text + " [Пользователь прислал фото]").strip()
                 elif event.video or (event.document and "video" in getattr(event.document, "mime_type", "")):
                     path = await event.download_media(file=MEDIA_DIR)
                     filename = os.path.basename(path)
                     user["media_links"].append(filename)
                     upsert_user(user_id, media_links=json.dumps(user["media_links"]))
+                    log_conversation_event(user_id, "video_received", {"filename": filename})
                     llm_text = (text + " [Пользователь прислал видео]").strip()
 
+                if text.strip():
+                    log_conversation_event(user_id, "user_message", {"text": text})
+
                 reply_msg, tool_called = await generate_chat_response(user_id, llm_text, user["conversation_history"])
+                log_conversation_event(user_id, "bot_reply", {"text": reply_msg})
+                if tool_called:
+                    log_conversation_event(user_id, "tool_call", {
+                        "name": "save_candidate_data",
+                        "result": "SUCCESS",
+                        "arguments": {}
+                    })
+                    log_conversation_event(user_id, "state_change", {"from": "chatting", "to": "ask_media"})
                 await human_typing_delay(user_id, reply_msg)
                 await event.respond(reply_msg)
                 # Note: if tool_called, state is now ask_media, waiting for user response
@@ -903,6 +1070,7 @@ async def handle_message(event):
                         if elapsed > AUTO_MEDIA_TIMEOUT:
                             logger.info(f"[auto-complete] user={user_id} has {len(user['media_links'])} photos, idle for {elapsed:.0f}s — auto-completing")
                             empty_done_attempts.pop(user_id, None)
+                            log_conversation_event(user_id, "auto_complete")
                             upsert_user(user_id, state="done")
                             await generate_and_send_pdf(user_id, client)
                             return  # skip further processing for this message
@@ -914,6 +1082,11 @@ async def handle_message(event):
                     filename = os.path.basename(path)
                     user["media_links"].append(filename)
                     upsert_user(user_id, media_links=json.dumps(user["media_links"]))
+
+                    if event.photo:
+                        log_conversation_event(user_id, "photo_received", {"filename": filename})
+                    else:
+                        log_conversation_event(user_id, "video_received", {"filename": filename})
 
                     # Debounce: if this is part of an album (grouped_id), wait for silence before responding
                     if event.grouped_id:
@@ -954,6 +1127,9 @@ async def handle_message(event):
                     if text_lower in ("все", "всё", "готово", "done", "ok", "ок"):
                         if not user["media_links"]:
                             empty_done_attempts[user_id] += 1
+                            user_history_log = user.get("conversation_history", [])
+                            user_history_log.append({"role": "user", "content": text})
+                            log_conversation_event(user_id, "user_message", {"text": text})
                             if empty_done_attempts[user_id] >= 3:
                                 situation = "Кандидат 3 раза написал 'готово' без фото. Скажи что отправишь профиль без фото, рекрутер сам запросит если нужно."
                                 reply = await generate_media_response(user_id, situation, user["conversation_history"])
@@ -961,6 +1137,7 @@ async def handle_message(event):
                                     reply = "Ладно, отправлю без фото. Если надо, рекрутер сам попросит"
                                 await human_typing_delay(user_id, reply)
                                 await event.respond(reply)
+                                log_conversation_event(user_id, "state_change", {"from": "ask_media", "to": "done"})
                                 upsert_user(user_id, state="done")
                                 await generate_and_send_pdf(user_id, client)
                             else:
@@ -972,6 +1149,7 @@ async def handle_message(event):
                                 await event.respond(reply)
                         else:
                             empty_done_attempts.pop(user_id, None)  # reset counter on success
+                            log_conversation_event(user_id, "state_change", {"from": "ask_media", "to": "done"})
                             upsert_user(user_id, state="done")
                             await generate_and_send_pdf(user_id, client)
                     else:
@@ -1022,6 +1200,7 @@ async def handle_message(event):
 
         except Exception as e:
             logger.error(f"Handler error: {e}", exc_info=True)
+            log_conversation_event(user_id, "handler_error", {"error": str(e)})
             reply = "Ща, тут телефон завис. Секунду"
             await human_typing_delay(user_id, reply)
             await event.respond(reply)
