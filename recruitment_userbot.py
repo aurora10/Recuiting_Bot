@@ -1125,16 +1125,17 @@ async def handle_message(event):
                 else:
                     text_lower = text.strip().lower()
                     if text_lower in ("все", "всё", "готово", "done", "ok", "ок"):
+                        log_conversation_event(user_id, "user_message", {"text": text})
                         if not user["media_links"]:
                             empty_done_attempts[user_id] += 1
                             user_history_log = user.get("conversation_history", [])
                             user_history_log.append({"role": "user", "content": text})
-                            log_conversation_event(user_id, "user_message", {"text": text})
                             if empty_done_attempts[user_id] >= 3:
                                 situation = "Кандидат 3 раза написал 'готово' без фото. Скажи что отправишь профиль без фото, рекрутер сам запросит если нужно."
                                 reply = await generate_media_response(user_id, situation, user["conversation_history"])
                                 if not reply:
                                     reply = "Ладно, отправлю без фото. Если надо, рекрутер сам попросит"
+                                log_conversation_event(user_id, "bot_reply", {"text": reply})
                                 await human_typing_delay(user_id, reply)
                                 await event.respond(reply)
                                 log_conversation_event(user_id, "state_change", {"from": "ask_media", "to": "done"})
@@ -1145,6 +1146,7 @@ async def handle_message(event):
                                 reply = await generate_media_response(user_id, situation, user["conversation_history"])
                                 if not reply:
                                     reply = "Без фоток не годится, скинь хотя бы пару"
+                                log_conversation_event(user_id, "bot_reply", {"text": reply})
                                 await human_typing_delay(user_id, reply)
                                 await event.respond(reply)
                         else:
@@ -1156,6 +1158,7 @@ async def handle_message(event):
                         old_task = photo_debounce_tasks.pop(user_id, None)
                         if old_task and not old_task.done():
                             old_task.cancel()
+                        log_conversation_event(user_id, "user_message", {"text": text})
                         count = len(user["media_links"])
                         if count > 0:
                             situation = f"Кандидат написал '{text}' вместо фото. У него уже {count} фото. Напомни что ждёшь фотки или может написать 'готово'."
@@ -1164,6 +1167,7 @@ async def handle_message(event):
                         reply = await generate_media_response(user_id, situation, user["conversation_history"])
                         if not reply:
                             reply = "Жду фотки работ. Как скинешь — напиши готово"
+                        log_conversation_event(user_id, "bot_reply", {"text": reply})
                         await human_typing_delay(user_id, reply)
                         await event.respond(reply)
 
@@ -1174,8 +1178,13 @@ async def handle_message(event):
                     filename = os.path.basename(path)
                     user["media_links"].append(filename)
                     upsert_user(user_id, media_links=json.dumps(user["media_links"]))
+                    if event.photo:
+                        log_conversation_event(user_id, "photo_received", {"filename": filename})
+                    else:
+                        log_conversation_event(user_id, "video_received", {"filename": filename})
                 else:
                     text_lower = text.strip().lower()
+                    log_conversation_event(user_id, "user_message", {"text": text})
                     # Append user message to history so the bot remembers the context
                     user["conversation_history"].append({"role": "user", "content": text})
                     
@@ -1184,6 +1193,7 @@ async def handle_message(event):
                     if not reply_msg:
                         reply_msg = "Пока новостей нет. Как только что-то будет — сразу дам знать"
                     
+                    log_conversation_event(user_id, "bot_reply", {"text": reply_msg})
                     # Save assistant reply to history
                     user["conversation_history"].append({"role": "assistant", "content": reply_msg})
                     upsert_user(user_id, conversation_history=json.dumps(user["conversation_history"]))
