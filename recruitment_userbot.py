@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -826,7 +827,110 @@ def create_dossier(user):
 # --------------------------------------------------------------------
 MAX_ATTACH_MB = 20  # stay well under Gmail's 25MB limit
 
-def _send_email_sync(user, pdf_bytes):
+def encode_image(image_path):
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode('utf-8')
+
+async def analyze_images_for_presentation(user):
+    image_paths = [os.path.join(MEDIA_DIR, p) for p in user.get("media_links", []) if p.lower().endswith((".jpg", ".jpeg", ".png", ".webp"))]
+    if not image_paths:
+        return []
+
+    messages = [
+        {
+            "role": "system",
+            "content": "Je bent een bouwexpert. Jouw taak is om foto's van het werk van een kandidaat (bouw/afwerking) te analyseren. Geef voor elke foto een korte, professionele titel (max 5 woorden) en een beschrijving (2-3 zinnen). Formatteer de output in JSON."
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Analyseer deze foto's en retourneer JSON in dit format: {\"slides\": [{\"title\": \"...\", \"description\": \"...\"}]}"
+                }
+            ]
+        }
+    ]
+    
+    for path in image_paths[:5]: # Max 5 photos
+        b64 = encode_image(path)
+        ext = os.path.splitext(path)[1].lower().strip(".")
+        if ext == "jpg": ext = "jpeg"
+        messages[1]["content"].append({
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/{ext};base64,{b64}"
+            }
+        })
+
+    try:
+        response = await openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=messages,
+            max_tokens=800,
+            response_format={"type": "json_object"}
+        )
+        data = json.loads(response.choices[0].message.content.strip())
+        slides = data.get("slides", [])
+        return list(zip(image_paths[:5], slides))
+    except Exception as e:
+        logger.error(f"Image analysis failed for user {user['user_id']}: {e}")
+        return [(p, {"title": "Projectfoto", "description": "Foto van het werk van de kandidaat."}) for p in image_paths[:5]]
+
+def create_html_dossier(user, analysis_data):
+    template_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "presentation_template.html")
+    if not os.path.exists(template_path):
+        logger.warning("presentation_template.html niet gevonden!")
+        return None
+
+    with open(template_path, "r", encoding="utf-8") as f:
+        html = f.read()
+
+    # Replacements
+    html = html.replace("{{CANDIDATE_ID}}", str(user["user_id"]))
+    html = html.replace("{{CANDIDATE_NAME}}", user.get("candidate_name") or f"Kandidaat {user['user_id']}")
+    html = html.replace("{{SPECIALIZATION}}", user.get("specialization", "") or "N/A")
+    
+    loc = user.get("location", "") or "N/A"
+    leg = user.get("legal_status", "") or "N/A"
+    team = user.get("team_size", "") or "N/A"
+    summary = f"Ervaren vakman gevestigd in {loc}. Actief via {leg} met een {team}."
+    html = html.replace("{{CANDIDATE_SUMMARY}}", summary)
+    
+    html = html.replace("{{AVAILABILITY}}", user.get("availability", "") or "N/A")
+    html = html.replace("{{RATE}}", user.get("rate", "") or "N/A")
+    html = html.replace("{{TEAM_SIZE}}", team)
+    html = html.replace("{{CAR_AND_TOOLS}}", user.get("car_and_tools", "") or "N/A")
+    html = html.replace("{{LEGAL_STATUS}}", leg)
+    html = html.replace("{{LOCATION}}", loc)
+    html = html.replace("{{LANGUAGES}}", user.get("languages", "") or "N/A")
+    
+    # Image slides
+    slides_html = ""
+    for i, (path, item_data) in enumerate(analysis_data, start=2):
+        title = item_data.get("title", "Projectfoto")
+        desc = item_data.get("description", "")
+        b64 = encode_image(path)
+        ext = os.path.splitext(path)[1].lower().strip(".")
+        if ext == "jpg": ext = "jpeg"
+        
+        slide = f'''
+    <!-- SLIDE {i} -->
+    <div class="slide">
+        <h2>{title}</h2>
+        <div class="image-container">
+            <img src="data:image/{ext};base64,{b64}" alt="{title}" loading="lazy">
+        </div>
+        <p>{desc}</p>
+        <div class="footer-note">Slide {i}</div>
+    </div>
+'''
+        slides_html += slide
+
+    html = html.replace("{{IMAGE_SLIDES}}", slides_html)
+    return html.encode("utf-8")
+
+def _send_email_sync(user, pdf_bytes, html_bytes=None):
     """Synchronous email sending — runs in a thread via asyncio.to_thread."""
     if not GMAIL_USER or not GMAIL_PASS:
         logger.warning("GMAIL_USER or GMAIL_PASS not set — skipping email.")
@@ -884,6 +988,11 @@ def _send_email_sync(user, pdf_bytes):
     pdf_attachment = MIMEApplication(pdf_bytes, _subtype="pdf", name=f"dossier_{user_id}.pdf")
     pdf_attachment.add_header("Content-Disposition", "attachment", filename=f"dossier_{user_id}.pdf")
     msg.attach(pdf_attachment)
+
+    if html_bytes:
+        html_attachment = MIMEApplication(html_bytes, _subtype="html", name=f"presentation_{user_id}.html")
+        html_attachment.add_header("Content-Disposition", "attachment", filename=f"presentation_{user_id}.html")
+        msg.attach(html_attachment)
 
     # Attach conversation transcript (.txt)
     conversation_txt = export_conversation_txt(user)
@@ -947,10 +1056,10 @@ def _send_email_sync(user, pdf_bytes):
         logger.error(f"Failed to send email for user {user_id}: {e}", exc_info=True)
 
 
-async def email_profile(user, pdf_bytes):
-    """Send the full profile (PDF + JSON + media) to Gmail asynchronously."""
+async def email_profile(user, pdf_bytes, html_bytes=None):
+    """Send the full profile (PDF + HTML + JSON + media) to Gmail asynchronously."""
     try:
-        await asyncio.to_thread(_send_email_sync, user, pdf_bytes)
+        await asyncio.to_thread(_send_email_sync, user, pdf_bytes, html_bytes)
     except Exception as e:
         logger.error(f"email_profile failed for user {user['user_id']}: {e}", exc_info=True)
 
@@ -988,15 +1097,34 @@ async def generate_and_send_pdf(user_id, client):
         
         pdf_bytes = pdf_buffer.getvalue()
 
-        # Send the PDF to Saved Messages ("me") so the candidate doesn't see it
+        # Generate HTML Dossier
+        logger.info(f"Analyzing images for HTML presentation for user {user_id}...")
+        analysis_data = await analyze_images_for_presentation(user)
+        html_bytes = create_html_dossier(user, analysis_data)
+        
+        if html_bytes:
+            html_filename = os.path.join(DOSSIER_DIR, f"presentation_{user_id}.html")
+            with open(html_filename, "wb") as f:
+                f.write(html_bytes)
+
+            html_buffer = BytesIO(html_bytes)
+            html_buffer.name = f"presentation_{user_id}.html"
+
+        # Send the PDF and HTML to Saved Messages ("me") so the candidate doesn't see it
         await client.send_file(
             "me",
             pdf_buffer,
             caption=f"Новый кандидат (ID {user_id}). Профиль готов.",
         )
+        if html_bytes:
+            await client.send_file(
+                "me",
+                html_buffer,
+                caption=f"Презентация кандидата (ID {user_id}).",
+            )
 
-        # Email the full profile (PDF + JSON + media) to Gmail
-        await email_profile(user, pdf_bytes)
+        # Email the full profile (PDF + HTML + JSON + media) to Gmail
+        await email_profile(user, pdf_bytes, html_bytes)
 
         log_conversation_event(user_id, "dossier_generated")
 
