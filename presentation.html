@@ -1,0 +1,426 @@
+
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kandidaatprofiel - Vladimir</title>
+
+<style>
+@import url('https://fonts.googleapis.com/css2?f    amily=Roboto:wght@400;700;900&display=swap');
+
+html,
+body {
+    margin: 0;
+    padding: 0;
+    background-color: #000000;
+    font-family: 'Roboto', sans-serif;
+    display: flex;
+    justify-content: center;
+    height: 100dvh;
+    overflow: hidden;
+}
+
+.deck {
+    width: 100%;
+    max-width: 430px;
+    height: 100dvh;
+    background-color: #111827;
+    color: #f3f4f6;
+    overflow-y: auto;
+    scroll-snap-type: y mandatory;
+    box-shadow: 0 0 20px rgba(255, 215, 0, 0.15);
+    position: relative;
+
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}
+
+.deck::-webkit-scrollbar {
+    display: none;
+}
+
+.slide {
+    height: 100dvh;
+    width: 100%;
+    padding: 30px 24px;
+    box-sizing: border-box;
+    scroll-snap-align: start;
+
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    padding-top: 60px;
+
+    border-bottom: 4px solid #FFD700;
+    position: relative;
+}
+
+.title-slide {
+    text-align: center;
+    background: linear-gradient(135deg, #111827 0%, #1f2937 100%);
+}
+
+h1 {
+    color: #FFD700;
+    font-size: 2.4rem;
+    font-weight: 900;
+    text-transform: uppercase;
+    margin: 0 0 10px 0;
+    letter-spacing: 0.5px;
+}
+
+h2 {
+    color: #FFD700;
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin: 0 0 16px 0;
+    border-left: 4px solid #FFD700;
+    padding-left: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+h3 {
+    color: #9ca3af;
+    font-size: 1.1rem;
+    font-weight: 400;
+    margin: 0 0 24px 0;
+}
+
+p {
+    font-size: 1rem;
+    line-height: 1.6;
+    color: #d1d5db;
+    margin: 0 0 15px 0;
+}
+
+.highlight-box {
+    background-color: #1f2937;
+    border: 1px solid #374151;
+    border-left: 4px solid #f97316;
+    border-radius: 8px;
+
+    padding: 16px;
+    margin-bottom: 15px;
+
+    text-align: left;
+}
+
+.image-container {
+    width: 100%;
+    height: 40vh;
+    margin: 0 0 20px 0;
+
+    border-radius: 8px;
+    overflow: hidden;
+
+    border: 2px solid #374151;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+}
+
+.image-container img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.id-badge {
+    display: inline-block;
+
+    background-color: #FFD700;
+    color: #111827;
+
+    font-weight: bold;
+    font-size: 0.9rem;
+    text-transform: uppercase;
+
+    padding: 6px 12px;
+    border-radius: 4px;
+    margin-bottom: 20px;
+}
+
+ul {
+    list-style-type: none;
+    padding: 0;
+    margin: 0 0 20px 0;
+}
+
+li {
+    position: relative;
+
+    margin-bottom: 12px;
+    padding-left: 24px;
+
+    font-size: 1.05rem;
+    color: #e5e7eb;
+}
+
+li::before {
+    content: "■";
+
+    position: absolute;
+    left: 0;
+    top: 4px;
+
+    color: #FFD700;
+    font-size: 0.8rem;
+}
+
+.footer-note {
+    position: absolute;
+    bottom: 15px;
+    left: 0;
+
+    width: 100%;
+
+    text-align: center;
+    font-size: 0.75rem;
+    color: #6b7280;
+
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.swipe-icon {
+    margin-top: 20px;
+
+    text-align: center;
+    color: #FFD700;
+    font-size: 24px;
+
+    animation: bounce 2s infinite;
+
+}
+
+@keyframes bounce {
+    0%, 20%, 50%, 80%, 100% {
+        transform: translateY(0);
+    }
+
+    40% {
+        transform: translateY(-10px);
+    }
+
+    60% {
+        transform: translateY(-5px);
+    }
+}
+
+@media (max-width: 420px) {
+    h1 {
+        font-size: 2rem;
+    }
+
+    h2 {
+        font-size: 1.3rem;
+    }
+
+    p,
+    li {
+        font-size: 0.95rem;
+    }
+}
+@media print {
+
+    @page {
+        size: 108mm 250mm;
+        margin: 0;
+    }
+
+    html,
+    body {
+        width: 430px;
+        height: auto;
+        overflow: visible;
+        background: #111827;
+    }
+
+    .deck {
+        width: 430px;
+        max-width: 430px;
+        height: auto;
+        overflow: visible;
+        box-shadow: none;
+    }
+
+    .slide {
+        width: 430px;
+        height: 1000px;
+
+        break-after: page;
+
+        overflow: hidden;
+    }
+
+    .slide:last-child {
+        break-after: auto;
+    }
+
+    .footer-note,
+    .swipe-icon {
+        display: none;
+    }
+}
+
+</style>
+</head>
+
+<body>
+
+<div class="deck">
+
+    <!-- SLIDE 1 -->
+    <div class="slide title-slide">
+
+        <span class="id-badge">ID: 7812141592</span>
+
+        <h1>Vladimir</h1>
+
+        <h3>Kandidaat en Referenties</h3>
+
+        <div class="highlight-box">
+            <p style="margin:0; font-weight:bold; color:#ffffff; text-transform:uppercase; font-size:0.85rem;">
+                Specialisatie
+            </p>
+
+            <p style="margin:0; color:#FFD700; font-size:1.2rem; font-weight:bold;">
+                Raamplaatsing & Gevelwerken
+            </p>
+        </div>
+
+        <p>
+            Ervaren vakman gevestigd in Wavre. Actief via een eigen Belgische
+            BV/TVA met een direct inzetbare brigade van 2 personen.
+        </p>
+
+        <div class="swipe-icon">↓</div>
+
+        <div class="footer-note">
+            Swipe omhoog voor de projectfoto's
+        </div>
+
+    </div>
+
+    <!-- SLIDE 2 -->
+    <div class="slide">
+
+        <h2>Complexe Vliesgevels</h2>
+
+        <div class="image-container">
+            <img
+                src="image1.jpg"
+                alt="Plaatsing van grote glaspartijen"
+                loading="lazy"
+            >
+        </div>
+
+        <p>
+            Deze referentiefoto toont de expertise van de kandidaat in complexe
+            glasgevels en structurele raaminstallaties op commerciële projecten.
+            De nauwkeurige afwerking van dergelijke grote raampartijen vereist
+            aanzienlijk vakmanschap en technisch inzicht.
+        </p>
+
+        <div class="footer-note">Slide 2 / 5</div>
+
+    </div>
+
+    <!-- SLIDE 3 -->
+    <div class="slide">
+
+        <h2>Werflogistiek</h2>
+
+        <div class="image-container">
+            <img
+                src="image2.jpg"
+                alt="Raamprofielen en logistiek op de werf"
+                loading="lazy"
+            >
+        </div>
+
+        <p>
+            Hier zien we de naadloze integratie van hoogwaardig buitenschrijnwerk
+            in een klassieke baksteengevel, inclusief de correcte logistieke
+            afhandeling. De brigade van twee man garandeert een veilige en
+            vlotte manipulatie van deze zware profielen en glasrekken.
+        </p>
+
+        <div class="footer-note">Slide 3 / 5</div>
+
+    </div>
+
+    <!-- SLIDE 4 -->
+    <div class="slide">
+
+        <h2>Grootschalige Projecten</h2>
+
+        <div class="image-container">
+            <img
+                src="image3.jpg"
+                alt="Grote bouwwerf met kraan"
+                loading="lazy"
+            >
+        </div>
+
+        <p>
+            De kandidaat is duidelijk vertrouwd met grootschalige bouwprojecten
+            met actieve kraanondersteuning en strakke planningen. Doordat het
+            team volledig zelfvoorzienend is qua gereedschap en vervoer, schalen
+            ze moeiteloos mee met de eisen van grote aannemers.
+        </p>
+
+        <div class="footer-note">Slide 4 / 5</div>
+
+    </div>
+
+    <!-- SLIDE 5 -->
+    <div class="slide">
+
+        <h2>Samenvatting & Actie</h2>
+
+        <div class="highlight-box">
+
+            <p style="margin:0; color:#FFD700; font-weight:bold; font-size:1.1rem;">
+                Beschikbaar vanaf juli
+            </p>
+
+            <p style="margin:4px 0 0 0; color:#ffffff;">
+                Tarief: €24 - €25 / uur
+            </p>
+
+        </div>
+
+        <ul>
+            <li><strong>Team:</strong> Brigade van 2 personen</li>
+            <li><strong>Uitrusting:</strong> Eigen vervoer & gereedschap</li>
+            <li><strong>Administratie:</strong> Eigen BV / TVA in België</li>
+            <li><strong>Locatie:</strong> Wavre (basis)</li>
+            <li><strong>Talen:</strong> Pools, Russisch, basis Frans</li>
+        </ul>
+
+        <p style="
+            margin-top:auto;
+            text-align:center;
+            font-weight:bold;
+            color:#f97316;
+            font-size:1.1rem;
+            border:2px solid #f97316;
+            padding:12px;
+            border-radius:8px;
+        ">
+            Klaar voor inzet op uw werf.
+        </p>
+
+        <div class="footer-note">
+            Einde presentatie
+        </div>
+
+    </div>
+
+</div>
+
+</body>
+</html>
+

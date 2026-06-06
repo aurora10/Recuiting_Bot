@@ -19,6 +19,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY recruitment_userbot.py .
 COPY DejaVuSans.ttf .
 COPY DejaVuSans-Bold.ttf .
+COPY presentation_template.html .
 
 # Data directory for persistent volumes (session, db, media, dossiers)
 # Defaults to /app/data in container; overridable via DATA_DIR env var
