@@ -665,10 +665,16 @@ async def generate_chat_response(user_id, text, user_history):
         
     except openai.APIError as e:
         logger.error(f"[LLM] user={user_id} OpenAI API error: {type(e).__name__}: {e}", exc_info=True)
-        return "Секунду, я перезвоню. Что-то связь оборвалась.", False
+        err_msg = "Связь тупит, секунду."
+        user_history.append({"role": "assistant", "content": err_msg})
+        upsert_user(user_id, conversation_history=json.dumps(user_history))
+        return err_msg, False
     except Exception as e:
         logger.error(f"[LLM] user={user_id} unexpected error: {type(e).__name__}: {e}", exc_info=True)
-        return "Секунду, я перезвоню. Что-то связь оборвалась.", False
+        err_msg = "Связь тупит, секунду."
+        user_history.append({"role": "assistant", "content": err_msg})
+        upsert_user(user_id, conversation_history=json.dumps(user_history))
+        return err_msg, False
 
 # --------------------------------------------------------------------
 # Validation helpers
